@@ -329,3 +329,101 @@ input:checked + .slider:before {
 .slider.round:before {
     border-radius: 50%;
 }
+
+/* --- 沉浸式手机端通话体验 --- */
+body.immersive-mode .container {
+    padding: 0;
+    max-width: 100%;
+}
+
+/* 隐藏外围所有与通话无关的操作台 */
+body.immersive-mode header,
+body.immersive-mode .config-card,
+body.immersive-mode .chat-area,
+body.immersive-mode .video-header {
+    display: none !important;
+}
+
+body.immersive-mode .main-content {
+    margin: 0;
+    padding: 0;
+    height: 100vh;
+    width: 100vw;
+}
+
+body.immersive-mode .sidebar {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    height: 100vh;
+}
+
+body.immersive-mode .video-card {
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 1000;
+}
+
+body.immersive-mode .video-container {
+    aspect-ratio: auto;
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+}
+
+body.immersive-mode video {
+    object-fit: cover;
+}
+
+/* 沉浸式悬浮控制栏 */
+.floating-controls {
+    position: absolute;
+    bottom: 50px;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: center;
+    gap: 30px;
+    z-index: 1001;
+}
+
+.btn-circular {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    transition: transform 0.2s, opacity 0.2s;
+}
+
+.btn-circular:active {
+    transform: scale(0.9);
+}
+
+#btn-switch-cam {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    color: white;
+    font-size: 24px;
+}
+
+#btn-hangup {
+    height: 56px;
+    padding: 0 32px;
+    border-radius: 28px;
+    background: #ef4444;
+    color: white;
+    font-size: 18px;
+    font-weight: bold;
+}

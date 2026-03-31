@@ -18,6 +18,9 @@ const ctx = canvas.getContext('2d');
 const chatLog = document.getElementById('chat-log');
 const micStatus = document.getElementById('mic-status');
 const faceStatus = document.getElementById('face-status');
+const floatingControls = document.getElementById('floating-controls');
+const btnSwitchCam = document.getElementById('btn-switch-cam');
+const btnHangup = document.getElementById('btn-hangup');
 
 // --- 状态与对象 ---
 let ws = null;
@@ -29,6 +32,7 @@ let isPlaying = false;
 let nextPlayTime = 0;
 let videoInterval = null;
 let isConnected = false;
+let currentFacingMode = "user"; // "user" 或 "environment"
 
 // --- 人脸识别相关 ---
 let labeledFaceDescriptors = [];
@@ -75,8 +79,8 @@ async function initFaceAPI() {
         }
         
         if (labeledFaceDescriptors.length > 0) {
-            faceMatcher = new faceapi.FaceMatcher(labeledFaceDescriptors, 0.5); // 距离 < 0.5 则认为匹配
-            faceStatus.textContent = `✅ 人脸模型就绪 (已登记 ${labeledFaceDescriptors.length} 人)`;
+            faceMatcher = new faceapi.FaceMatcher(labeledFaceDescriptors, 0.6); // 距离 < 0.6 则认为匹配（原为 0.5 有可能过于严格）
+            faceStatus.textContent = `✅ 人脸就绪 (已登记 ${labeledFaceDescriptors.length} 人)`;
         } else {
             faceStatus.textContent = '⚠️ 模型就绪，但 faces 目录下没图';
         }
@@ -196,6 +200,43 @@ function cleanup() {
     appendSystemMsg('对话已结束');
 }
 
+btnHangup.addEventListener('click', () => cleanup());
+
+btnSwitchCam.addEventListener('click', async () => {
+    if (!mediaStream || !mediaStream.getVideoTracks().length) return;
+    
+    // 反转摄像头朝向
+    currentFacingMode = currentFacingMode === "user" ? "environment" : "user";
+    
+    // 停止当前的视频轨道
+    const videoTracks = mediaStream.getVideoTracks();
+    videoTracks.forEach(track => {
+        track.stop();
+        mediaStream.removeTrack(track);
+    });
+    
+    try {
+        // 请求新方向的摄像头
+        const newStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                facingMode: { ideal: currentFacingMode },
+                width: { ideal: 640 },
+                height: { ideal: 480 },
+                frameRate: { max: 15 }
+            }
+        });
+        
+        const newVideoTrack = newStream.getVideoTracks()[0];
+        // 插入旧的包含话筒的音视流里，实现无缝切换画面不断音
+        mediaStream.addTrack(newVideoTrack);
+        elVideo.srcObject = mediaStream;
+        
+    } catch (e) {
+        console.error("切换摄像头方向失败", e);
+        appendSystemMsg("切换摄像头失败: " + e.message);
+    }
+});
+
 function updateUIState() {
     if (isConnected) {
         btnStart.disabled = true;
@@ -205,6 +246,10 @@ function updateUIState() {
         micStatus.classList.add('active');
         elApiKey.disabled = true;
         elModel.disabled = true;
+        
+        // 开启全屏沉浸通话界面
+        document.body.classList.add('immersive-mode');
+        floatingControls.style.display = 'flex';
     } else {
         btnStart.disabled = false;
         btnStop.disabled = true;
@@ -213,6 +258,10 @@ function updateUIState() {
         micStatus.classList.remove('active');
         elApiKey.disabled = false;
         elModel.disabled = false;
+        
+        // 退出沉浸通话界面
+        document.body.classList.remove('immersive-mode');
+        floatingControls.style.display = 'none';
     }
 }
 
@@ -323,6 +372,7 @@ function handleServerMessage(msg) {
 async function startMedia() {
     // 决定是否请求视频流
     const requestVideo = cameraToggle.checked ? {
+        facingMode: { ideal: currentFacingMode },
         width: { ideal: 640 },
         height: { ideal: 480 },
         frameRate: { max: 15 }
@@ -447,8 +497,9 @@ function startVideoFrameExtraction() {
                 const detection = await faceapi.detectSingleFace(canvas).withFaceLandmarks().withFaceDescriptor();
                 if (detection) {
                     const bestMatch = faceMatcher.findBestMatch(detection.descriptor);
+                    console.log('📸 摄像头捕获到人脸 -> 匹配结果:', bestMatch.toString());
                     if (bestMatch.label !== 'unknown') {
-                        console.log('👀 本地人脸识别匹配:', bestMatch.toString());
+                        console.log('👀 本地人脸识别确认是老熟人！发送打招呼信号...');
                         // 发送识别信号给 Node.js 后端代理
                         if (ws && ws.readyState === WebSocket.OPEN) {
                             ws.send(JSON.stringify({

@@ -78,6 +78,12 @@
                     <div class="video-container">
                         <video id="local-video" autoplay playsinline muted></video>
                         <span class="video-overlay" id="video-overlay">摄像头已关闭</span>
+                        
+                        <!-- 沉浸模式悬浮按钮 -->
+                        <div class="floating-controls" id="floating-controls" style="display: none;">
+                            <button id="btn-switch-cam" class="btn-circular btn-secondary" title="切换镜头">🔄</button>
+                            <button id="btn-hangup" class="btn-circular btn-danger" title="结束通话">📞挂断</button>
+                        </div>
                     </div>
                     <!-- 隐藏的 canvas 用于视频抽帧提取 JPEG -->
                     <canvas id="snapshot-canvas" style="display: none;"></canvas>
