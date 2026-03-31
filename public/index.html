@@ -72,7 +72,10 @@
 
             <!-- 右侧对话记录 -->
             <div class="chat-area card">
-                <h3>对话记录</h3>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <h3>对话记录</h3>
+                    <div id="face-status" style="font-size: 0.85rem; color: #94a3b8;">👨‍💻 正在准备人脸模型...</div>
+                </div>
                 <div class="chat-log" id="chat-log">
                     <div class="system-msg">准备就绪。请确认输入 API Key 后点击"开始对话"。</div>
                 </div>
@@ -83,7 +86,8 @@
         </div>
     </div>
 
-    <!-- 逻辑入口 -->
+    <!-- 人脸识别所需库与核心逻辑 -->
+    <script src="face-api.min.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

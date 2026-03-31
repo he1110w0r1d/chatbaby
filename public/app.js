@@ -17,23 +17,72 @@ const canvas = document.getElementById('snapshot-canvas');
 const ctx = canvas.getContext('2d');
 const chatLog = document.getElementById('chat-log');
 const micStatus = document.getElementById('mic-status');
+const faceStatus = document.getElementById('face-status');
 
 // --- 状态与对象 ---
 let ws = null;
 let audioContext = null;
 let mediaStream = null;
 let audioProcessor = null;
-let playbackBuffer = []; // 用于模型音频响应的缓冲
+let playbackBuffer = [];
 let isPlaying = false;
 let nextPlayTime = 0;
 let videoInterval = null;
 let isConnected = false;
 
-// 页面加载恢复 API Key
+// --- 人脸识别相关 ---
+let labeledFaceDescriptors = [];
+let faceMatcher = null;
+let isFaceModelsLoaded = false;
+let isRecognizing = false;
+
+// 页面加载恢复 API Key 和加载人脸模型
 window.addEventListener('DOMContentLoaded', () => {
     const savedKey = localStorage.getItem('qwen_api_key');
     if (savedKey) elApiKey.value = savedKey;
+    initFaceAPI();
 });
+
+// 初始化 face-api 并提取照片特征
+async function initFaceAPI() {
+    try {
+        faceStatus.textContent = '👨‍💻 加载人脸模型中...';
+        // 加载模型权重 (从 public/models)
+        await faceapi.nets.ssdMobilenetv1.loadFromUri('/models');
+        await faceapi.nets.faceLandmark68Net.loadFromUri('/models');
+        await faceapi.nets.faceRecognitionNet.loadFromUri('/models');
+        
+        // 定义我们要识别的老熟人拼音名单
+        const knownPersons = ['zhangsan', 'boss']; // TODO: 这里可以根据需要增减
+        labeledFaceDescriptors = [];
+        
+        for (const name of knownPersons) {
+            try {
+                // 从 public/faces/ 目录读取测试照片
+                const img = await faceapi.fetchImage(`/faces/${name}.jpg`);
+                // 提取 128 维特征面部向量
+                const detections = await faceapi.detectSingleFace(img).withFaceLandmarks().withFaceDescriptor();
+                if (detections) {
+                    labeledFaceDescriptors.push(new faceapi.LabeledFaceDescriptors(name, [detections.descriptor]));
+                    console.log(`✅ 已提取特征: ${name}.jpg`);
+                }
+            } catch (e) {
+                console.warn(`未找到或无法处理参考照片: /faces/${name}.jpg`, e.message);
+            }
+        }
+        
+        if (labeledFaceDescriptors.length > 0) {
+            faceMatcher = new faceapi.FaceMatcher(labeledFaceDescriptors, 0.5); // 距离 < 0.5 则认为匹配
+            faceStatus.textContent = `✅ 人脸模型就绪 (已登记 ${labeledFaceDescriptors.length} 人)`;
+        } else {
+            faceStatus.textContent = '⚠️ 模型就绪，但 faces 目录下没图';
+        }
+        isFaceModelsLoaded = true;
+    } catch (err) {
+        console.error("Face API 初始化失败", err);
+        faceStatus.textContent = '❌ 人脸模型加载失败';
+    }
+}
 
 // 保存 API Key 并在输入时触发
 elApiKey.addEventListener('change', () => {
@@ -311,8 +360,8 @@ function stopMedia() {
 
 function startVideoFrameExtraction() {
     clearInterval(videoInterval);
-    // 每 1000 毫秒 (1秒) 提取 1 帧发给模型
-    videoInterval = setInterval(() => {
+    // 每 2000 毫秒提取 1 帧发给模型 (降速以节省性能并为人脸识别留出算力)
+    videoInterval = setInterval(async () => {
         if (!isConnected || !cameraToggle.checked) return;
 
         // 如果视频组件没有准备好
@@ -322,10 +371,8 @@ function startVideoFrameExtraction() {
         canvas.height = elVideo.videoHeight;
         ctx.drawImage(elVideo, 0, 0, canvas.width, canvas.height);
         
-        // 压缩成 JPEG base64 (Qwen 要求每抓一帧至少一次 input_audio_buffer.append 后发)
-        // jpeg 质量可以压低一点避免包太大，比如 0.6
+        // 1. 发给 Qwen 模型看
         const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
-        // data:image/jpeg;base64,... 提取 base64 部分
         const base64Image = dataUrl.split(',')[1];
         
         if (ws && ws.readyState === WebSocket.OPEN) {
@@ -335,7 +382,33 @@ function startVideoFrameExtraction() {
             }));
         }
 
-    }, 1000);
+        // 2. 本地执行人脸比对
+        if (isFaceModelsLoaded && faceMatcher && !isRecognizing) {
+            isRecognizing = true;
+            try {
+                // 使用刚才截好的 canvas 画布去计算
+                const detection = await faceapi.detectSingleFace(canvas).withFaceLandmarks().withFaceDescriptor();
+                if (detection) {
+                    const bestMatch = faceMatcher.findBestMatch(detection.descriptor);
+                    if (bestMatch.label !== 'unknown') {
+                        console.log('👀 本地人脸识别匹配:', bestMatch.toString());
+                        // 发送识别信号给 Node.js 后端代理
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({
+                                type: 'face_match',
+                                name: bestMatch.label,
+                                distance: bestMatch.distance
+                            }));
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error("前端人脸识别运行报错", e);
+            }
+            isRecognizing = false;
+        }
+
+    }, 2000);
 }
 
 
