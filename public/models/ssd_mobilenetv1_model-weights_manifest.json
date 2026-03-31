@@ -156,7 +156,8 @@
       ],
       "paths":
       [
-          "ssd_mobilenetv1_model.bin"
+          "ssd_mobilenetv1_model-shard1",
+          "ssd_mobilenetv1_model-shard2"
       ]
   }
 ]
