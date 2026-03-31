@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Qwen-Omni-Realtime Web Demo</title>
+    <link rel="stylesheet" href="index.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Qwen-Omni-Realtime</h1>
+            <div class="status-badge" id="connection-status">未连接</div>
+        </header>
+
+        <div class="main-content">
+            <!-- 左侧配置和视频栏 -->
+            <div class="sidebar">
+                <div class="card config-card">
+                    <h3>配置区</h3>
+                    <div class="form-group">
+                        <label for="api-key">百炼 API Key (本地保存)</label>
+                        <input type="password" id="api-key" placeholder="sk-..." />
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="model-select">模型选择</label>
+                        <select id="model-select">
+                            <option value="qwen3.5-omni-plus-realtime">qwen3.5-omni-plus-realtime (最强)</option>
+                            <option value="qwen3-omni-flash-realtime">qwen3-omni-flash-realtime (经济)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="voice-select">发音人 (Voice)</label>
+                        <select id="voice-select">
+                            <option value="Cherry">Cherry (阳光积极小姐姐)</option>
+                            <option value="Ethan">Ethan (活力阳光男声)</option>
+                            <option value="Serena">Serena (温柔小姐姐)</option>
+                            <option value="Tina">Tina (甜美客服)</option>
+                            <option value="Ryan">Ryan (节奏播音男声)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="instructions">系统提示词 (角色设定)</label>
+                        <textarea id="instructions" rows="3">你是一个友好的AI助手，请自然、简短地用中文回答我的问题。</textarea>
+                    </div>
+
+                    <div class="action-buttons">
+                        <button id="btn-start" class="btn-primary">开始对话 (自动模式)</button>
+                        <button id="btn-stop" class="btn-danger" disabled>结束对话</button>
+                    </div>
+                </div>
+
+                <div class="card video-card">
+                    <div class="video-header">
+                        <h3>摄像头采集 (发送给模型)</h3>
+                        <label class="switch">
+                            <input type="checkbox" id="camera-toggle" checked>
+                            <span class="slider round"></span>
+                        </label>
+                    </div>
+                    <div class="video-container">
+                        <video id="local-video" autoplay playsinline muted></video>
+                        <span class="video-overlay" id="video-overlay">摄像头已关闭</span>
+                    </div>
+                    <!-- 隐藏的 canvas 用于视频抽帧提取 JPEG -->
+                    <canvas id="snapshot-canvas" style="display: none;"></canvas>
+                </div>
+            </div>
+
+            <!-- 右侧对话记录 -->
+            <div class="chat-area card">
+                <h3>对话记录</h3>
+                <div class="chat-log" id="chat-log">
+                    <div class="system-msg">准备就绪。请确认输入 API Key 后点击"开始对话"。</div>
+                </div>
+                <div class="mic-status" id="mic-status">
+                    <span class="mic-indicator"></span> 麦克风监听中 (VAD自动打断)
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 逻辑入口 -->
+    <script src="app.js"></script>
+</body>
+</html>

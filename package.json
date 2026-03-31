@@ -1,0 +1,14 @@
+{
+  "name": "qwen-omni-realtime-demo",
+  "version": "1.0.0",
+  "description": "Qwen-Omni-Realtime 实时音视频对话 Web Demo",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "ws": "^8.18.0"
+  }
+}
