@@ -2,9 +2,55 @@ const express = require('express');
 const { createServer } = require('http');
 const { WebSocketServer, WebSocket } = require('ws');
 const path = require('path');
+const fs = require('fs');
+const multer = require('multer');
 
 const app = express();
 app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.json());
+
+// --- 动态人脸上传 API ---
+const uploadDir = path.join(__dirname, 'public', 'faces');
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+// 获取当前已录入的所有人脸
+app.get('/api/faces', (req, res) => {
+    try {
+        const files = fs.readdirSync(uploadDir);
+        const validFiles = files.filter(f => f.match(/\.(jpg|jpeg|png)$/i));
+        res.json(validFiles);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 接收前端上传的新人脸并改名存档
+const upload = multer({ dest: uploadDir }); // 临时存入
+app.post('/api/upload-face', upload.single('photo'), (req, res) => {
+    const name = req.body.name;
+    if (!name || !req.file) {
+        return res.status(400).json({ error: '请提供姓名和照片文件' });
+    }
+
+    try {
+        const ext = path.extname(req.file.originalname).toLowerCase();
+        // 强制存为一个安全的文件名 (覆盖同名文件)
+        const targetFilename = name.trim() + (ext || '.jpg');
+        const targetPath = path.join(uploadDir, targetFilename);
+        
+        // 把 multer 随机生成的文件重命名为 `姓名.后缀`
+        fs.renameSync(req.file.path, targetPath);
+        
+        console.log(`[API] 成功录入新人脸: ${targetFilename}`);
+        res.json({ success: true, filename: targetFilename });
+    } catch (e) {
+        console.error('保存人脸失败', e);
+        res.status(500).json({ error: '保存失败' });
+    }
+});
+
 
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });

@@ -52,22 +52,25 @@ async function initFaceAPI() {
         await faceapi.nets.faceLandmark68Net.loadFromUri('/models');
         await faceapi.nets.faceRecognitionNet.loadFromUri('/models');
         
-        // 定义我们要识别的老熟人拼音名单
-        const knownPersons = ['zhangsan', 'boss']; // TODO: 这里可以根据需要增减
+        // 动态调用后端接口获取 public/faces 下的所有合法照片
+        const res = await fetch('/api/faces');
+        const knownFiles = await res.json();
+        
         labeledFaceDescriptors = [];
         
-        for (const name of knownPersons) {
+        for (const filename of knownFiles) {
             try {
-                // 从 public/faces/ 目录读取测试照片
-                const img = await faceapi.fetchImage(`/faces/${name}.jpg`);
+                // 读取同名照片
+                const img = await faceapi.fetchImage(`/faces/${filename}`);
                 // 提取 128 维特征面部向量
                 const detections = await faceapi.detectSingleFace(img).withFaceLandmarks().withFaceDescriptor();
                 if (detections) {
+                    const name = filename.substring(0, filename.lastIndexOf('.'));
                     labeledFaceDescriptors.push(new faceapi.LabeledFaceDescriptors(name, [detections.descriptor]));
-                    console.log(`✅ 已提取特征: ${name}.jpg`);
+                    console.log(`✅ 已提取特征: ${filename}`);
                 }
             } catch (e) {
-                console.warn(`未找到或无法处理参考照片: /faces/${name}.jpg`, e.message);
+                console.warn(`未找到或无法处理参考照片: /faces/${filename}`, e.message);
             }
         }
         
@@ -94,6 +97,60 @@ cameraToggle.addEventListener('change', (e) => {
         elVideoOverlay.classList.remove('active');
     } else {
         elVideoOverlay.classList.add('active');
+    }
+});
+
+// --- 人脸录入中心 ---
+const elFaceName = document.getElementById('face-name');
+const elFaceFile = document.getElementById('face-file');
+const btnUpload = document.getElementById('btn-upload');
+const uploadStatus = document.getElementById('upload-status');
+
+btnUpload.addEventListener('click', async () => {
+    const name = elFaceName.value.trim();
+    const file = elFaceFile.files[0];
+    
+    if (!name || !file) {
+        uploadStatus.style.color = '#ef4444';
+        uploadStatus.textContent = '请填写姓名拼音并选择一张照片！';
+        return;
+    }
+    
+    uploadStatus.style.color = '#94a3b8';
+    uploadStatus.textContent = '正在上传录入...';
+    btnUpload.disabled = true;
+    
+    const formData = new FormData();
+    formData.append('name', name);
+    formData.append('photo', file);
+    
+    try {
+        const res = await fetch('/api/upload-face', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+            uploadStatus.style.color = '#10b981';
+            uploadStatus.textContent = '上传成功！正在提取特征池...';
+            // 清空表单
+            elFaceName.value = '';
+            elFaceFile.value = '';
+            
+            // 热重载人脸库
+            await initFaceAPI();
+            
+            uploadStatus.textContent = `更新完毕！已认识: ${name}`;
+            setTimeout(() => { uploadStatus.textContent = ''; }, 3000);
+        } else {
+            throw new Error(data.error || '上传失败');
+        }
+    } catch (e) {
+        uploadStatus.style.color = '#ef4444';
+        uploadStatus.textContent = e.message;
+    } finally {
+        btnUpload.disabled = false;
     }
 });
 
