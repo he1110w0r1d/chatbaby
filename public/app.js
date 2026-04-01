@@ -16,6 +16,7 @@ const cameraToggle = document.getElementById('camera-toggle');
 const canvas = document.getElementById('snapshot-canvas');
 const ctx = canvas.getContext('2d');
 const chatLog = document.getElementById('chat-log');
+const debugLog = document.getElementById('debug-log');
 const micStatus = document.getElementById('mic-status');
 const faceStatus = document.getElementById('face-status');
 const floatingControls = document.getElementById('floating-controls');
@@ -39,6 +40,8 @@ let labeledFaceDescriptors = [];
 let faceMatcher = null;
 let isFaceModelsLoaded = false;
 let isRecognizing = false;
+let recognizedUserName = null; // 识别到的用户名
+let continuousFaceCheckInterval = null;
 
 // 页面加载恢复 API Key 和加载人脸模型
 window.addEventListener('DOMContentLoaded', () => {
@@ -79,8 +82,12 @@ async function initFaceAPI() {
         }
         
         if (labeledFaceDescriptors.length > 0) {
-            faceMatcher = new faceapi.FaceMatcher(labeledFaceDescriptors, 0.6); // 距离 < 0.6 则认为匹配（原为 0.5 有可能过于严格）
+            faceMatcher = new faceapi.FaceMatcher(labeledFaceDescriptors, 0.65);
             faceStatus.textContent = `✅ 人脸就绪 (已登记 ${labeledFaceDescriptors.length} 人)`;
+            // 如果摄像头已经打开，开始连续检测
+            if (elVideo.srcObject) {
+                startContinuousFaceDetection();
+            }
         } else {
             faceStatus.textContent = '⚠️ 模型就绪，但 faces 目录下没图';
         }
@@ -96,13 +103,51 @@ elApiKey.addEventListener('change', () => {
     localStorage.setItem('qwen_api_key', elApiKey.value.trim());
 });
 
-cameraToggle.addEventListener('change', (e) => {
+cameraToggle.addEventListener('change', async (e) => {
     if (e.target.checked) {
         elVideoOverlay.classList.remove('active');
+        // 自动启动摄像头
+        try {
+            await startMediaOnly();
+            // 开始连续人脸检测
+            startContinuousFaceDetection();
+        } catch (e) {
+            console.error('启动摄像头失败', e);
+            appendSystemMsg('摄像头启动失败: ' + e.message);
+            e.target.checked = false;
+            elVideoOverlay.classList.add('active');
+        }
     } else {
         elVideoOverlay.classList.add('active');
+        stopContinuousFaceDetection();
+        stopMedia();
     }
 });
+
+// 仅启动媒体（不创建 AudioWorklet）
+async function startMediaOnly() {
+    const requestVideo = {
+        facingMode: { ideal: currentFacingMode },
+        width: { ideal: 640 },
+        height: { ideal: 480 },
+        frameRate: { max: 15 }
+    };
+
+    const audioConstraints = {
+        channelCount: 1,
+        sampleRate: 16000,
+        echoCancellation: true,
+        noiseSuppression: true,
+    };
+
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: audioConstraints,
+        video: requestVideo
+    });
+    
+    elVideo.srcObject = mediaStream;
+    await elVideo.play();
+}
 
 // --- 人脸录入中心 ---
 const elFaceName = document.getElementById('face-name');
@@ -168,11 +213,34 @@ btnStart.addEventListener('click', async () => {
     }
     localStorage.setItem('qwen_api_key', apiKey);
 
-    appendSystemMsg('正在请求系统权限并连接服务器...');
+    appendSystemMsg('正在打开摄像头并识别人脸...');
     btnStart.disabled = true;
 
     try {
+        // 1. 打开摄像头
         await startMedia();
+        debugLogMsg('📷 摄像头已打开');
+        
+        // 2. 等待摄像头稳定
+        appendSystemMsg('⏳ 等待摄像头稳定...');
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        
+        // 3. 做人脸识别
+        appendSystemMsg('🔍 正在识别人脸...');
+        let userName = await detectCurrentUser();
+        debugLogMsg(`🔍 人脸识别结果: ${userName || '未识别'}`);
+        
+        if (userName) {
+            const newInstructions = `用户叫 ${userName}，请在他们说话前主动打招呼说"你好 ${userName}，见到你很高兴！"`;
+            elInstructions.value = newInstructions;
+            debugLogMsg(`📝 更新 instructions: ${newInstructions}`);
+            appendSystemMsg(`👤 识别成功！用户: ${userName}`);
+        } else {
+            appendSystemMsg('⚠️ 未识别到已登记的用户，将以普通模式开始对话');
+        }
+        
+        // 4. 开始对话
+        appendSystemMsg('🚀 正在连接服务器...');
         connectWebSocket();
     } catch (e) {
         console.error(e);
@@ -181,6 +249,111 @@ btnStart.addEventListener('click', async () => {
         stopMedia();
     }
 });
+
+// 连续人脸检测
+function startContinuousFaceDetection() {
+    if (continuousFaceCheckInterval) return;
+    
+    continuousFaceCheckInterval = setInterval(async () => {
+        if (!isFaceModelsLoaded || !faceMatcher || !elVideo.srcObject || isRecognizing) return;
+        
+        isRecognizing = true;
+        try {
+            if (elVideo.readyState < 2) {
+                isRecognizing = false;
+                return;
+            }
+            
+            canvas.width = elVideo.videoWidth || 640;
+            canvas.height = elVideo.videoHeight || 480;
+            ctx.drawImage(elVideo, 0, 0, canvas.width, canvas.height);
+            
+            const detection = await faceapi.detectSingleFace(canvas).withFaceLandmarks().withFaceDescriptor();
+            if (detection) {
+                const bestMatch = faceMatcher.findBestMatch(detection.descriptor);
+                if (bestMatch.label !== 'unknown') {
+                    recognizedUserName = bestMatch.label;
+                    debugLogMsg(`👤 识别到: ${recognizedUserName} (距离: ${bestMatch.distance.toFixed(3)})`);
+                    
+                    // 更新 UI：显示欢迎信息
+                    faceStatus.textContent = `👋 欢迎 ${recognizedUserName}！`;
+                    faceStatus.style.color = '#10b981';
+                    
+                    // 更新按钮文字
+                    btnStart.textContent = `开始对话 (${recognizedUserName})`;
+                    btnStart.disabled = false;
+                    
+                    // 更新 system prompt
+                    elInstructions.value = `用户叫 ${recognizedUserName}，请在他们说话前主动打招呼说"你好 ${recognizedUserName}，见到你很高兴！"`;
+                }
+            }
+        } catch (e) {
+            console.error('人脸检测错误', e);
+        }
+        isRecognizing = false;
+    }, 1000); // 每秒检测一次
+}
+
+function stopContinuousFaceDetection() {
+    if (continuousFaceCheckInterval) {
+        clearInterval(continuousFaceCheckInterval);
+        continuousFaceCheckInterval = null;
+    }
+    recognizedUserName = null;
+}
+
+// 开始对话前先做人脸识别
+async function detectCurrentUser() {
+    if (!isFaceModelsLoaded || !faceMatcher) {
+        debugLogMsg('⚠️ 人脸模型未加载');
+        return null;
+    }
+    
+    if (!elVideo.srcObject) {
+        debugLogMsg('⚠️ 视频流未就绪');
+        return null;
+    }
+    
+    // 等待视频帧准备好
+    if (elVideo.readyState < 2) {
+        debugLogMsg('⏳ 等待视频帧...');
+        await new Promise(resolve => {
+            elVideo.onloadeddata = resolve;
+            setTimeout(resolve, 2000);
+        });
+    }
+    
+    // 额外等待确保视频帧已渲染
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    if (!elVideo.videoWidth) {
+        debugLogMsg('⚠️ 视频宽度为0，无法识别');
+        return null;
+    }
+    
+    debugLogMsg(`📷 视频尺寸: ${elVideo.videoWidth}x${elVideo.videoHeight}`);
+    
+    try {
+        canvas.width = elVideo.videoWidth;
+        canvas.height = elVideo.videoHeight;
+        ctx.drawImage(elVideo, 0, 0, canvas.width, canvas.height);
+        
+        const detection = await faceapi.detectSingleFace(canvas).withFaceLandmarks().withFaceDescriptor();
+        if (detection) {
+            const bestMatch = faceMatcher.findBestMatch(detection.descriptor);
+            debugLogMsg(`👤 人脸识别: ${bestMatch.label} (距离: ${bestMatch.distance.toFixed(3)})`);
+            if (bestMatch.label !== 'unknown') {
+                return bestMatch.label;
+            }
+        } else {
+            debugLogMsg('⚠️ 未检测到人脸');
+        }
+    } catch (e) {
+        console.error('人脸识别失败', e);
+        debugLogMsg(`❌ 人脸识别错误: ${e.message}`);
+    }
+    return null;
+}
 
 btnStop.addEventListener('click', () => {
     cleanup();
@@ -273,6 +446,7 @@ function connectWebSocket() {
     ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
+        debugLogMsg('✅ WS 连接代理服务器成功');
         // 第一条消息发给 Node.js 后端，带上配置要求去建连
         const initData = {
             type: 'init',
@@ -282,13 +456,16 @@ function connectWebSocket() {
             instructions: elInstructions.value
         };
         ws.send(JSON.stringify(initData));
+        debugLogMsg(`📤 发送 init: model=${elModel.value}, voice=${elVoice.value}`);
     };
 
     ws.onmessage = (event) => {
         let msg;
         try {
             msg = JSON.parse(event.data);
+            debugLogMsg(`📥 收到: type=${msg.type}`);
         } catch (e) {
+            debugLogMsg(`❌ 无法解析 WS 消息`);
             console.error('无法解析 WS 消息', e);
             return;
         }
@@ -297,13 +474,21 @@ function connectWebSocket() {
     };
 
     ws.onerror = (err) => {
+        debugLogMsg('❌ WS 错误');
         console.error('WebSocket Error:', err);
         appendSystemMsg('WebSocket 连接发生错误');
     };
 
-    ws.onclose = () => {
-        console.log('WebSocket 挂断');
-        cleanup();
+    ws.onclose = (event) => {
+        debugLogMsg(`🔌 WS 断开: code=${event.code}`);
+        console.log(`WebSocket 挂断: code=${event.code}, reason=${event.reason}`);
+        appendSystemMsg(`连接已断开 (code: ${event.code})`);
+        // 不要立即 cleanup，给 AI 回复一点时间
+        setTimeout(() => {
+            if (ws === null || ws.readyState === WebSocket.CLOSED) {
+                cleanup();
+            }
+        }, 3000);
     };
 }
 
@@ -355,7 +540,7 @@ function handleServerMessage(msg) {
             currentAiMsg = null;
             break;
         case 'response.audio.delta':
-            // 收到 AI 语音的 Base64 PCM 数据，加入播放队列
+            debugLogMsg('🔊 收到 AI 音频数据，开始播放');
             if (msg.delta) {
                 queueAudioPlayback(msg.delta);
             }
@@ -430,13 +615,16 @@ async function startMedia() {
     await audioContext.audioWorklet.addModule('audio-processor.js');
     audioProcessor = new AudioWorkletNode(audioContext, 'audio-capture-processor');
 
+    let audioCount = 0;
     audioProcessor.port.onmessage = (event) => {
         if (!isConnected) return;
         
-        // 当 Worklet 将麦克风降采样好的 PCM ArrayBuffer 发过来，我们通过 WS 转发给后端
-        const pcmData = event.data.pcm; // ArrayBuffer (Int16)
+        const pcmData = event.data.pcm;
+        audioCount++;
+        if (audioCount % 10 === 0) {
+            debugLogMsg(`🎤 采集音频: ${pcmData.byteLength} bytes`);
+        }
         
-        // 转 base64
         const base64PCM = arrayBufferToBase64(pcmData);
         
         ws.send(JSON.stringify({
@@ -497,18 +685,21 @@ function startVideoFrameExtraction() {
                 const detection = await faceapi.detectSingleFace(canvas).withFaceLandmarks().withFaceDescriptor();
                 if (detection) {
                     const bestMatch = faceMatcher.findBestMatch(detection.descriptor);
-                    console.log('📸 摄像头捕获到人脸 -> 匹配结果:', bestMatch.toString());
+                    debugLogMsg(`👤 人脸: ${bestMatch.label} (距离: ${bestMatch.distance.toFixed(3)})`);
                     if (bestMatch.label !== 'unknown') {
-                        console.log('👀 本地人脸识别确认是老熟人！发送打招呼信号...');
-                        // 发送识别信号给 Node.js 后端代理
+                        debugLogMsg(`✅ 识别成功，发送 face_match 信号`);
                         if (ws && ws.readyState === WebSocket.OPEN) {
                             ws.send(JSON.stringify({
                                 type: 'face_match',
                                 name: bestMatch.label,
                                 distance: bestMatch.distance
                             }));
+                        } else {
+                            debugLogMsg(`⚠️ WS 未连接，无法发送 face_match`);
                         }
                     }
+                } else {
+                    debugLogMsg(`⚠️ 未检测到人脸`);
                 }
             } catch (e) {
                 console.error("前端人脸识别运行报错", e);
@@ -541,6 +732,11 @@ function base64ToFloat32Array(base64) {
 function queueAudioPlayback(base64PcmData) {
     if (!audioContext) return;
     try {
+        // 手机浏览器需要先恢复 AudioContext 才能播放
+        if (audioContext.state === 'suspended') {
+            audioContext.resume();
+        }
+        
         const floatArray = base64ToFloat32Array(base64PcmData);
         // Qwen 输出音频指定为 24000
         const audioBuffer = audioContext.createBuffer(1, floatArray.length, 24000);
@@ -600,6 +796,17 @@ function appendSystemMsg(text) {
     el.textContent = text;
     chatLog.appendChild(el);
     chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+function debugLogMsg(text) {
+    if (!debugLog) return;
+    const el = document.createElement('div');
+    el.style.fontSize = '11px';
+    el.style.color = '#64748b';
+    el.style.wordBreak = 'break-all';
+    el.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
+    debugLog.appendChild(el);
+    debugLog.scrollTop = debugLog.scrollHeight;
 }
 
 function createMsgBubble(role, text) {

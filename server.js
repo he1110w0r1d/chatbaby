@@ -136,8 +136,17 @@ wss.on('connection', (clientWs, req) => {
 
       qwenWs.on('message', (data) => {
         // 将阿里云的响应转发给前端
+        const msgStr = data.toString();
+        try {
+          const parsed = JSON.parse(msgStr);
+          console.log(`[阿里云→前端] type=${parsed.type}`);
+        } catch(e) {
+          console.log(`[阿里云→前端] 非JSON数据, 长度=${msgStr.length}`);
+        }
         if (clientWs.readyState === WebSocket.OPEN) {
-          clientWs.send(data.toString());
+          clientWs.send(msgStr);
+        } else {
+          console.log('[阿里云→前端] 前端已断开，丢弃消息');
         }
       });
 
@@ -179,22 +188,32 @@ wss.on('connection', (clientWs, req) => {
         console.log(`\n[Proxy 中控] 触发主动问候机制 -> 镜头前用户为: ${parsedName}`);
         
         if (qwenWs && qwenWs.readyState === WebSocket.OPEN) {
-          // 伪造一条 user 角色的消息塞给模型，带有长提示词
+          const eventId = "greet_" + Date.now();
+          
           const injectItem = {
+            event_id: eventId,
             type: "conversation.item.create",
             item: {
               type: "message",
               role: "user",
               content: [{
                 type: "input_text",
-                text: `(这是系统底层发来的强视觉提示信号)：系统通过安防摄像头刚刚成功识别到，目前坐在你面前与你视频连线的熟人是【${parsedName}】。目前不需要了解他要办什么事，仅仅需要你立刻、大方、热情地开口向 ${parsedName} 打个招呼问好！绝不能暴露你是看“提示信号”知道的。`
+                text: `你好！我是${parsedName}，见到你很高兴！`
               }]
             }
           };
           qwenWs.send(JSON.stringify(injectItem));
+          console.log(`[Proxy 中控] 已发送问候消息给 AI: ${parsedName}`);
           
-          // 紧接着强制引发模型说话，无视 VAD 的沉默计时
-          qwenWs.send(JSON.stringify({ type: "response.create" }));
+          setTimeout(() => {
+            if (qwenWs && qwenWs.readyState === WebSocket.OPEN) {
+              qwenWs.send(JSON.stringify({ 
+                type: "response.create",
+                event_id: "resp_" + Date.now()
+              }));
+              console.log(`[Proxy 中控] 已发送 response.create 触发 AI 回复`);
+            }
+          }, 500);
         }
       } else {
         // console.log(`[Proxy] ${parsedName} 还在冷却期内，不打扰`);
@@ -205,7 +224,19 @@ wss.on('connection', (clientWs, req) => {
 
     // 后续消息直接且透明地转发给阿里云
     if (qwenWs && qwenWs.readyState === WebSocket.OPEN) {
+      try {
+        const parsed = JSON.parse(rawData.toString());
+        if (parsed.type === 'input_audio_buffer.append') {
+          console.log(`[前端→阿里云] type=${parsed.type}, audio_len=${parsed.audio ? parsed.audio.length : 0}`);
+        } else {
+          console.log(`[前端→阿里云] type=${parsed.type}`);
+        }
+      } catch(e) {
+        console.log(`[前端→阿里云] 非JSON数据`);
+      }
       qwenWs.send(rawData.toString());
+    } else {
+      console.log('[前端→阿里云] 阿里云连接未就绪，丢弃消息');
     }
   });
 
